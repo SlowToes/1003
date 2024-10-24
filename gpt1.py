@@ -1,7 +1,7 @@
+from pathlib import Path
 import csv
 import random
 import matplotlib.pyplot as plt
-from pathlib import Path
 
 # Function to read student records from the CSV file
 def read_student_records(filename):
@@ -34,7 +34,6 @@ def group_students_by_tutorial(students):
 
 # Function to check if a student can be added to a team based on the criteria
 def can_add_student(team, student, overall_avg_cgpa):
-    # If the team is empty, any student can be added
     if not team:
         return True
 
@@ -45,9 +44,7 @@ def can_add_student(team, student, overall_avg_cgpa):
     for member in team:
         school = member['school']
         school_counts[school] = school_counts.get(school, 0) + 1
-    # Add the new student
     school_counts[student['school']] = school_counts.get(student['school'], 0) + 1
-    # Check for majority
     if max(school_counts.values()) > team_size // 2:
         return False
 
@@ -56,21 +53,14 @@ def can_add_student(team, student, overall_avg_cgpa):
     for member in team:
         gender = member['gender']
         gender_counts[gender] = gender_counts.get(gender, 0) + 1
-    # Add the new student
     gender_counts[student['gender']] = gender_counts.get(student['gender'], 0) + 1
-    # Check for majority
     if max(gender_counts.values()) > team_size // 2:
         return False
 
     # Criteria 3: CGPA Balance
-    # Calculate the average CGPA of the team
-    cgpas = [member['cgpa'] for member in team]
-    avg_cgpa = sum(cgpas) / len(cgpas)
-    # Adding the new student's CGPA
-    new_avg_cgpa = (sum(cgpas) + student['cgpa']) / team_size
-    # Allowable CGPA deviation (tolerance can be adjusted)
-    cgpa_tolerance = 0.5
-    if abs(new_avg_cgpa - overall_avg_cgpa) > cgpa_tolerance:
+    avg_cgpa = sum(member['cgpa'] for member in team) / len(team)
+    new_avg_cgpa = (avg_cgpa * len(team) + student['cgpa']) / team_size
+    if abs(new_avg_cgpa - overall_avg_cgpa) > 0.5:  # CGPA tolerance
         return False
 
     return True
@@ -81,47 +71,88 @@ def form_teams_greedy_stochastic(students_in_group, overall_avg_cgpa):
     num_teams = len(students_in_group) // team_size
     teams = [[] for _ in range(num_teams)]
 
-    # Shuffle students to introduce randomness
     candidates = students_in_group.copy()
     random.shuffle(candidates)
 
-    # Initialize team indices
-    team_indices = list(range(num_teams))
-
-    # While there are candidates to assign
     while candidates:
-        for team_index in team_indices:
+        for team in teams:
             if not candidates:
-                break  # No more candidates to assign
-            # Get the team
-            team = teams[team_index]
-
-            # Generate candidate students for this team
-            candidate_pool = []
-            for student in candidates:
-                if can_add_student(team, student, overall_avg_cgpa):
-                    candidate_pool.append(student)
-
+                break
+            candidate_pool = [student for student in candidates if can_add_student(team, student, overall_avg_cgpa)]
             if candidate_pool:
-                # Randomly select a student from the candidate pool
                 selected_student = random.choice(candidate_pool)
                 team.append(selected_student)
                 candidates.remove(selected_student)
-            else:
-                # If no suitable candidate, pick any student (tolerate imbalances)
+            elif candidates:  # If no candidates, tolerate imbalances
                 selected_student = candidates.pop()
                 team.append(selected_student)
+
     return teams
 
-# Function to write the final team assignments to a CSV file with Mean CGPA for each team
+def evaluate_team_balance(team, overall_avg_cgpa):
+    school_counts = {}
+    gender_counts = {}
+    cgpas = [student['cgpa'] for student in team]
+
+    for student in team:
+        school = student['school']
+        gender = student['gender']
+        school_counts[school] = school_counts.get(school, 0) + 1
+        gender_counts[gender] = gender_counts.get(gender, 0) + 1
+
+    school_penalty = max(school_counts.values()) / len(team)
+    gender_penalty = max(gender_counts.values()) / len(team)
+    avg_cgpa = sum(cgpas) / len(cgpas)
+    cgpa_deviation = abs(avg_cgpa - overall_avg_cgpa)
+
+    return (1 - school_penalty) + (1 - gender_penalty) - cgpa_deviation
+
+def attempt_swap(team1, team2, overall_avg_cgpa):
+    best_swap = None
+    best_improvement = 0
+
+    for student1 in team1:
+        for student2 in team2:
+            temp_team1 = team1.copy()
+            temp_team2 = team2.copy()
+            temp_team1.remove(student1)
+            temp_team2.remove(student2)
+            temp_team1.append(student2)
+            temp_team2.append(student1)
+
+            pre_swap_score = evaluate_team_balance(team1, overall_avg_cgpa) + evaluate_team_balance(team2, overall_avg_cgpa)
+            post_swap_score = evaluate_team_balance(temp_team1, overall_avg_cgpa) + evaluate_team_balance(temp_team2, overall_avg_cgpa)
+
+            if post_swap_score > pre_swap_score:
+                improvement = post_swap_score - pre_swap_score
+                if improvement > best_improvement:
+                    best_improvement = improvement
+                    best_swap = (student1, student2)
+
+    return best_swap
+
+def swap_teams_to_optimize(teams, overall_avg_cgpa):
+    swap_made = True
+    while swap_made:
+        swap_made = False
+        for i in range(len(teams)):
+            for j in range(i + 1, len(teams)):
+                best_swap = attempt_swap(teams[i], teams[j], overall_avg_cgpa)
+                if best_swap:
+                    student1, student2 = best_swap
+                    teams[i].remove(student1)
+                    teams[j].remove(student2)
+                    teams[i].append(student2)
+                    teams[j].append(student1)
+                    swap_made = True
+    return teams
+
 def write_team_assignments(filename, final_team_assignments):
-    # Prepare data for writing
     output_rows = []
-    team_number = 1  # Start numbering globally
+    team_number = 1
 
     for tg, teams in final_team_assignments.items():
         for team in teams:
-            # Calculate the mean CGPA for the current team
             cgpas = [student['cgpa'] for student in team]
             mean_cgpa = sum(cgpas) / len(cgpas)
 
@@ -134,19 +165,17 @@ def write_team_assignments(filename, final_team_assignments):
                     student['gender'],
                     student['cgpa'],
                     f'Team {team_number}',
-                    mean_cgpa  # Add mean CGPA for the team
+                    mean_cgpa
                 ]
                 output_rows.append(output_row)
-            team_number += 1  # Increment team number after each team
+            team_number += 1
 
-    # Write to CSV
     output_file_path = Path(__file__).parent / "balanced_teams.csv"
     with output_file_path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.writer(file)
         writer.writerow(['Tutorial Group', 'Student ID', 'School', 'Name', 'Gender', 'CGPA', 'Team Assigned', 'Mean CGPA'])
         writer.writerows(output_rows)
 
-# Function to visualize team diversity metrics
 def visualize_team_diversity(teams):
     team_numbers = []
     school_diversity = []
@@ -155,37 +184,32 @@ def visualize_team_diversity(teams):
 
     for team_number, team in enumerate(teams, start=1):
         team_numbers.append(team_number)
-        # School diversity
         schools = [member['school'] for member in team]
         school_counts = len(set(schools))
         school_diversity.append(school_counts)
-        # Gender diversity
+
         genders = [member['gender'] for member in team]
         gender_counts = len(set(genders))
         gender_diversity.append(gender_counts)
-        # CGPA average
+
         cgpas = [member['cgpa'] for member in team]
         avg_cgpa = sum(cgpas) / len(cgpas)
         cgpa_averages.append(avg_cgpa)
 
-    # Plotting
     plt.figure(figsize=(12, 4))
 
-    # School Diversity
     plt.subplot(1, 3, 1)
     plt.bar(team_numbers, school_diversity)
     plt.xlabel('Team Number')
     plt.ylabel('Number of Schools Represented')
     plt.title('School Diversity per Team')
 
-    # Gender Diversity
     plt.subplot(1, 3, 2)
     plt.bar(team_numbers, gender_diversity)
     plt.xlabel('Team Number')
     plt.ylabel('Number of Genders Represented')
     plt.title('Gender Diversity per Team')
 
-    # CGPA Averages
     plt.subplot(1, 3, 3)
     plt.bar(team_numbers, cgpa_averages)
     plt.xlabel('Team Number')
@@ -195,32 +219,20 @@ def visualize_team_diversity(teams):
     plt.tight_layout()
     plt.show()
 
-# Main execution flow
-def main():
-    # Step 1: Read student records
-    students = read_student_records('records.csv')
-
-    # Step 2: Calculate overall average CGPA
-    overall_avg_cgpa = sum([s['cgpa'] for s in students]) / len(students)
-
-    # Step 3: Group students by tutorial group
+# Main workflow
+if __name__ == "__main__":
+    students = read_student_records("records.csv")
     tutorial_groups = group_students_by_tutorial(students)
-
-    # Step 4: Form teams for each tutorial group
+    
     final_team_assignments = {}
+
     for tg, students_in_group in tutorial_groups.items():
+        overall_avg_cgpa = sum(student['cgpa'] for student in students_in_group) / len(students_in_group)
         teams = form_teams_greedy_stochastic(students_in_group, overall_avg_cgpa)
-        final_team_assignments[tg] = teams
+        optimized_teams = swap_teams_to_optimize(teams, overall_avg_cgpa)
+        final_team_assignments[tg] = optimized_teams
 
-    # Step 5: Write team assignments to CSV with Mean CGPA
-    write_team_assignments('team_assignments.csv', final_team_assignments)
-    # print("Team assignments with mean CGPA have been written to 'team_assignments.csv'.")
-
-    # # Step 6: Visualize diversity metrics for one tutorial group (optional)
-    # for tg, teams in final_team_assignments.items():
-    #     print(f'Visualization for Tutorial Group {tg}')
-    #     visualize_team_diversity(teams)
-    #     break  # Visualize only the first tutorial group
-
-if __name__ == '__main__':
-    main()
+    write_team_assignments("balanced_teams.csv", final_team_assignments)
+    
+    # Uncomment to visualize team diversity
+    # visualize_team_diversity([team for teams in final_team_assignments.values() for team in teams])
