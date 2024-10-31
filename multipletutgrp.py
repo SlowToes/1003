@@ -204,10 +204,23 @@ def write_student_records(tut_grps):
     # Prepare header row
     output_rows.append("Tutorial Group,Student ID,School,Name,Gender,CGPA,Team CGPA,Team Assigned")
     
+    ############ final changes
+    team_num = 1
+    count = 0
+    ############ we want the teams to increment without resetting after each tut grp
+
     # Prepare data rows
     for tut_grp, teams in tut_grps.items():
         for team in teams:
             for student in team:
+                ############ final changes
+                student['team_assigned'] = f"Team {team_num}"
+                count += 1
+                if count == 5:
+                    team_num += 1
+                    count = 0
+                ############ we want the teams to increment without resetting after each tut grp
+
                 # Create a comma-separated row for each student
                 output_row = ",".join([
                     student['tutorial_group'],
@@ -220,12 +233,11 @@ def write_student_records(tut_grps):
                     student['team_assigned']
                 ])
                 output_rows.append(output_row)
-    
+
     output_file_path = Path(__file__).parent / "balanced_teams.csv"
     with output_file_path.open("w", encoding="utf-8") as file:
         for row in output_rows:
             file.write(row + "\n")
-
 
 
 all_students = read_student_records("records.csv")
